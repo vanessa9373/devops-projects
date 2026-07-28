@@ -1,0 +1,22 @@
+{
+  "name": "cicd-pipeline-automation-app",
+  "version": "1.0.0",
+  "description": "Sample containerized service deployed to AWS ECS via the CI/CD pipeline",
+  "main": "src/index.js",
+  "scripts": {
+    "start": "node src/index.js",
+    "test": "jest --coverage",
+    "lint": "eslint src --ext .js"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "express": "^4.19.2"
+  },
+  "devDependencies": {
+    "eslint": "^8.57.0",
+    "jest": "^29.7.0",
+    "supertest": "^7.0.0"
+  }
+}

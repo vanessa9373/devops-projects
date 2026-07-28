@@ -1,0 +1,146 @@
+name: CI/CD Pipeline
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+env:
+  AWS_REGION: us-east-1
+  ECR_REPOSITORY: cicd-pipeline-dev-app
+  ECS_CLUSTER: cicd-pipeline-dev-cluster
+  ECS_SERVICE: cicd-pipeline-dev-service
+  TASK_DEF_FAMILY: cicd-pipeline-dev-app
+  CONTAINER_NAME: app
+
+jobs:
+  # ── Stage 1: test ───────────────────────────────────────────────────────
+  test:
+    name: Test
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: app
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: app/package-lock.json
+
+      - run: npm ci
+      - run: npm test
+
+  # ── Stage 2: build & push (main only) ───────────────────────────────────
+  build-and-push:
+    name: Build & push image
+    needs: test
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write # OIDC — no long-lived AWS keys stored in the repo
+      contents: read
+    outputs:
+      image_tag: ${{ github.sha }}
+      registry: ${{ steps.ecr-login.outputs.registry }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure AWS credentials via OIDC
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Login to ECR
+        id: ecr-login
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Build, tag, and push image
+        env:
+          ECR_REGISTRY: ${{ steps.ecr-login.outputs.registry }}
+          IMAGE_TAG: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          docker build \
+            --build-arg GIT_SHA="$IMAGE_TAG" \
+            --build-arg BUILD_TIME="$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+            -t "$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG" \
+            app
+          docker push "$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG"
+
+  # ── Stage 3: deploy ──────────────────────────────────────────────────────
+  deploy:
+    name: Deploy to ECS
+    needs: build-and-push
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure AWS credentials via OIDC
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Download current task definition
+        run: |
+          aws ecs describe-task-definition \
+            --task-definition "${{ env.TASK_DEF_FAMILY }}" \
+            --query taskDefinition > task-definition.json
+
+      - name: Render new task definition with the freshly built image
+        id: render
+        uses: aws-actions/amazon-ecs-render-task-definition@v1
+        with:
+          task-definition: task-definition.json
+          container-name: ${{ env.CONTAINER_NAME }}
+          image: ${{ needs.build-and-push.outputs.registry }}/${{ env.ECR_REPOSITORY }}:${{ needs.build-and-push.outputs.image_tag }}
+
+      - name: Register task definition and deploy to ECS
+        uses: aws-actions/amazon-ecs-deploy-task-definition@v2
+        with:
+          task-definition: ${{ steps.render.outputs.task-definition }}
+          service: ${{ env.ECS_SERVICE }}
+          cluster: ${{ env.ECS_CLUSTER }}
+          # Blocks until the service reports steady state. If the new
+          # revision fails (bad health checks, crash loop), the ECS
+          # deployment circuit breaker (terraform/main.tf) automatically
+          # rolls the service back to the previous task definition and
+          # this step — and the whole workflow — fails, surfacing the
+          # rollback immediately instead of silently leaving prod degraded.
+          wait-for-service-stability: true
+
+  # ── Stage 4: smoke test ──────────────────────────────────────────────────
+  smoke-test:
+    name: Smoke test
+    needs: deploy
+    runs-on: ubuntu-latest
+    steps:
+      - name: Hit /health through the ALB
+        env:
+          ALB_DNS_NAME: ${{ vars.ALB_DNS_NAME }}
+        run: |
+          set -euo pipefail
+          if [ -z "${ALB_DNS_NAME:-}" ]; then
+            echo "ALB_DNS_NAME repo variable not set — skipping smoke test."
+            echo "Set it to the terraform 'alb_dns_name' output to enable this check."
+            exit 0
+          fi
+          for i in $(seq 1 10); do
+            status=$(curl -s -o /dev/null -w '%{http_code}' "http://$ALB_DNS_NAME/health" || echo 000)
+            if [ "$status" = "200" ]; then
+              echo "Smoke test passed (HTTP $status)"
+              exit 0
+            fi
+            echo "Attempt $i: got HTTP $status, retrying in 6s..."
+            sleep 6
+          done
+          echo "Smoke test failed: /health never returned 200"
+          exit 1

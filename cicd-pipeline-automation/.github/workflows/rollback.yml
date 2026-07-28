@@ -1,0 +1,43 @@
+name: Manual Rollback
+
+# The automatic rollback trigger lives in terraform (ECS deployment circuit
+# breaker) and fires on failed health checks with zero human action needed.
+# This workflow is the second rollback trigger: a one-click way to roll the
+# service back to a known-good task definition revision for cases the
+# circuit breaker won't catch on its own (e.g. a bad release that passes
+# health checks but is functionally broken).
+
+on:
+  workflow_dispatch:
+    inputs:
+      revision:
+        description: "Task definition revision to roll back to (blank = previous revision)"
+        required: false
+        default: ""
+
+env:
+  AWS_REGION: us-east-1
+  ECS_CLUSTER: cicd-pipeline-dev-cluster
+  ECS_SERVICE: cicd-pipeline-dev-service
+  TASK_DEF_FAMILY: cicd-pipeline-dev-app
+
+jobs:
+  rollback:
+    name: Roll back ECS service
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure AWS credentials via OIDC
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Roll back
+        run: |
+          chmod +x scripts/rollback.sh
+          ./scripts/rollback.sh "${{ env.TASK_DEF_FAMILY }}" "${{ env.ECS_CLUSTER }}" "${{ env.ECS_SERVICE }}" "${{ github.event.inputs.revision }}"

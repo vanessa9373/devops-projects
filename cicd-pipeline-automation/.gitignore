@@ -1,0 +1,16 @@
+
+# Node
+node_modules/
+coverage/
+npm-debug.log*
+
+# Terraform
+terraform/.terraform/
+terraform/.terraform.lock.hcl
+terraform/*.tfstate
+terraform/*.tfstate.backup
+terraform/*.tfplan
+terraform/.build/
+
+# OS
+.DS_Store
