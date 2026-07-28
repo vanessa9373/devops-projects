@@ -1,0 +1,33 @@
+name: Terraform CI
+
+on:
+  push:
+    paths: ["iac-environment-automation/**"]
+  pull_request:
+    paths: ["iac-environment-automation/**"]
+
+defaults:
+  run:
+    working-directory: iac-environment-automation
+
+jobs:
+  validate:
+    name: fmt + validate (all modules & environments)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "~> 1.5"
+
+      - name: Run the same check used locally
+        run: ./scripts/validate-all.sh
+
+  shellcheck:
+    name: Shellcheck bash scripts
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: shellcheck
+        run: shellcheck scripts/*.sh
