@@ -1,0 +1,49 @@
+name: Terraform CI
+
+on:
+  push:
+    paths: ["kubernetes-microservices-deployment/terraform/**"]
+  pull_request:
+    paths: ["kubernetes-microservices-deployment/terraform/**"]
+
+defaults:
+  run:
+    working-directory: kubernetes-microservices-deployment/terraform
+
+jobs:
+  validate:
+    name: fmt + validate
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "~> 1.5"
+
+      - name: terraform fmt
+        run: terraform fmt -check -recursive
+
+      - name: terraform init (no backend)
+        run: terraform init -backend=false -input=false
+
+      - name: terraform validate
+        run: terraform validate
+
+  kubeval:
+    name: Validate Kubernetes manifests
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: kubernetes-microservices-deployment
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install kubeconform
+        run: |
+          curl -sSLo kubeconform.tar.gz https://github.com/yannh/kubeconform/releases/latest/download/kubeconform-linux-amd64.tar.gz
+          tar -xzf kubeconform.tar.gz kubeconform
+          sudo mv kubeconform /usr/local/bin/
+
+      - name: kubeconform
+        run: kubeconform -strict -summary k8s/

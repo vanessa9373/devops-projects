@@ -1,0 +1,48 @@
+# Backend API tier. Uses go-httpbin (a small, well-known HTTP echo/test
+# service) as a stand-in for a real API — this project demonstrates the
+# orchestration (deployments/services/HPA/observability), not custom app
+# code, which is already covered in ../../cicd-pipeline-automation.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: backend
+  namespace: microservices-demo
+  labels:
+    app: backend
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: backend
+  template:
+    metadata:
+      labels:
+        app: backend
+    spec:
+      containers:
+        - name: backend
+          image: mccutchen/go-httpbin:v2.15.0
+          ports:
+            - containerPort: 8080
+          env:
+            - name: REDIS_ADDR
+              value: "redis:6379"
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: 300m
+              memory: 256Mi
+          readinessProbe:
+            httpGet:
+              path: /status/200
+              port: 8080
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /status/200
+              port: 8080
+            initialDelaySeconds: 15
+            periodSeconds: 20

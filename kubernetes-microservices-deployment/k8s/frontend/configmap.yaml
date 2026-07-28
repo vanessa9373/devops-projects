@@ -1,0 +1,32 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: frontend-html
+  namespace: microservices-demo
+data:
+  index.html: |
+    <!DOCTYPE html>
+    <html>
+      <head><title>Microservices Demo</title></head>
+      <body style="font-family: sans-serif; max-width: 640px; margin: 4rem auto;">
+        <h1>Kubernetes Microservices Demo</h1>
+        <p>frontend (nginx) &rarr; backend (go-httpbin) &rarr; cache (redis), running on EKS.</p>
+        <p><a href="/api/get">Call the backend through this frontend's nginx proxy &rarr;</a></p>
+      </body>
+    </html>
+  nginx.conf: |
+    server {
+      listen 80;
+
+      location / {
+        root /usr/share/nginx/html;
+        index index.html;
+      }
+
+      # Reverse-proxies to the backend Service by its cluster-internal DNS
+      # name — demonstrates the frontend/backend service-to-service call,
+      # not just two unrelated Deployments sitting in the same namespace.
+      location /api/ {
+        proxy_pass http://backend.microservices-demo.svc.cluster.local/;
+      }
+    }
